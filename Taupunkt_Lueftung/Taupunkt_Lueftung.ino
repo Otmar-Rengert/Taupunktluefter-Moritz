@@ -1,3 +1,7 @@
+// History
+// 2024-12-20	Otmar	Clone from github and experiment
+
+
 // Dieser Code benötigt zwingend die folgenden Libraries:
 #include "DHT.h"
 #include <Wire.h> 
@@ -16,10 +20,10 @@ bool rel;
 #define DHTTYPE_2 DHT22 // DHT 22  
 
 // *******  Korrekturwerte der einzelnen Sensorwerte  *******
-#define Korrektur_t_1  -3 // Korrekturwert Innensensor Temperatur
-#define Korrektur_t_2  -4 // Korrekturwert Außensensor Temperatur
-#define Korrektur_h_1  0  // Korrekturwert Innensensor Luftfeuchtigkeit
-#define Korrektur_h_2  0  // Korrekturwert Außensensor Luftfeuchtigkeit
+#define Korrektur_t_1  -0.7 // Korrekturwert Innensensor Temperatur
+#define Korrektur_t_2  -0.4 // Korrekturwert Außensensor Temperatur
+#define Korrektur_h_1  +1.9  // Korrekturwert Innensensor Luftfeuchtigkeit
+#define Korrektur_h_2  +1.3  // Korrekturwert Außensensor Luftfeuchtigkeit
 //***********************************************************
 
 #define SCHALTmin   5.0 // minimaler Taupunktunterschied, bei dem das Relais schaltet
