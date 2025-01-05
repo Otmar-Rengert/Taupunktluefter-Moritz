@@ -42,9 +42,9 @@ NTPClient timeClient(ntpUDP, "europe.pool.ntp.org", 3600, 5*60*1000);  /* offset
 
 
 
-#define RELAIPIN 16 // Anschluss des Lüfter-Relais
-#define DHTPIN_1  0 // Datenleitung für den DHT-Sensor 1 (innen)
-#define DHTPIN_2  2 // Datenleitung für den DHT-Sensor 2 (außen)
+#define RELAIS_PIN  14 // Anschluss des Lüfter-Relais (D5)
+#define DHT_IN_PIN   0 // Datenleitung für den DHT-Sensor innen (D3)
+#define DHT_OUT_PIN  2 // Datenleitung für den DHT-Sensor 2 (außen) (D4)
 
 #define RELAIS_EIN LOW
 #define RELAIS_AUS HIGH
@@ -66,8 +66,8 @@ bool rel;
 #define TemperatureInMin   10.0 // Minimale Innentemperatur, bei der die Lüftung aktiviert wird
 #define TemperatureOutMin -10.0 // Minimale Außentemperatur, bei der die Lüftung aktiviert wird
 
-DHT dht1(DHTPIN_1, DHTTYPE_1); //Der Innensensor wird ab jetzt mit dht1 angesprochen
-DHT dht2(DHTPIN_2, DHTTYPE_2); //Der Außensensor wird ab jetzt mit dht2 angesprochen
+DHT dht1(DHT_IN_PIN,  DHTTYPE_1); //Der Innensensor wird ab jetzt mit DHT_IN angesprochen
+DHT dht2(DHT_OUT_PIN, DHTTYPE_2); //Der Außensensor wird ab jetzt mit DHT_OUT angesprochen
 
 LiquidCrystal_I2C lcd(0x27,20,4); // LCD: I2C-Addresse und Displaygröße setzen
 
@@ -79,8 +79,8 @@ void setup() {
   Serial.println("Taupunktluefter-Moritz"); // Serielle Ausgabe, falls noch kein LCD angeschlossen ist
   Serial.println(F("Teste Sensoren.."));
 
-  pinMode(RELAIPIN, OUTPUT);          // Relaispin als Output definieren
-  digitalWrite(RELAIPIN, RELAIS_AUS); // Relais ausschalten
+  pinMode(RELAIS_PIN, OUTPUT);          // Relaispin als Output definieren
+  digitalWrite(RELAIS_PIN, RELAIS_AUS); // Relais ausschalten
   lcd.init();
   lcd.backlight();                      
   lcd.setCursor(2,0);
@@ -152,7 +152,7 @@ void loop()
   if (isnan(HumidityIn) || isnan(TemperatureIn) || isnan(HumidityOut) || isnan(TemperatureOut)) fehler = true;
    
   if (fehler == true) {
-    digitalWrite(RELAIPIN, RELAIS_AUS); // Relais ausschalten 
+    digitalWrite(RELAIS_PIN, RELAIS_AUS); // Relais ausschalten 
     lcd.setCursor(0,3);
     lcd.print(F("CPU Neustart....."));
     while (1);  // Endlosschleife um das Display zu lesen und die CPU durch den Watchdog neu zu starten
@@ -238,15 +238,22 @@ void loop()
   if (TemperatureOut < TemperatureOutMin )
 	  rel = false;
 
+#if 1
+  // Test, only temperature decides on relais switch
+    if (TemperatureIn > 22 )
+		rel=true;
+#endif
   if (rel == true)
   {
-    digitalWrite(RELAIPIN, RELAIS_EIN); // Relais einschalten
-    lcd.print(F("Lueftung: AN"));  
+    digitalWrite(RELAIS_PIN, RELAIS_EIN); // Relais einschalten
+    lcd.print(F("Lueftung: AN"));
+	Serial.println("Lueftung: AN");	
   } 
   else 
   {                             
-    digitalWrite(RELAIPIN, RELAIS_AUS); // Relais ausschalten
+    digitalWrite(RELAIS_PIN, RELAIS_AUS); // Relais ausschalten
     lcd.print(F("Lueftung: AUS"));
+	Serial.println("Lueftung: AUS");	
   }
 
   lcd.setCursor(0,1);
