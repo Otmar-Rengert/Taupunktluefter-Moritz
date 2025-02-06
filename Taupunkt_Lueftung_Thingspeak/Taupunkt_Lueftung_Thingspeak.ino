@@ -1,6 +1,8 @@
 // History
 // 2024-12-20	Otmar	Clone from github and experiment
 // 2024-12-31 	Otmar 	Based on Taupunkt_Lueftung.ino, but now for ESP8266 (WEMOS D1 mini)
+// 2025-02-05   Otmar   Correct input for In/Out DHT22. Add WiFi RSSI. Nicen startup display
+// 2025-02-06   Otmar   Commit final version for Moritz device
 
 // Dieser Code benötigt zwingend die folgenden Libraries:
 #include "DHT.h"
@@ -38,40 +40,35 @@ WiFiClient  client;
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "europe.pool.ntp.org", 3600, 5*60*1000);  /* offset 3600secs from GMT (+1h), update every 5 minutes */
 
+#define RELAY_PIN   14 // Anschluss des Lüfter-Relais (D5)
+#define DHT_IN_PIN   2 // Datenleitung für den DHT-Sensor innen (D4)
+#define DHT_OUT_PIN  0 // Datenleitung für den DHT-Sensor außen (D3)
 
+#define RELAY_ON  LOW
+#define RELAY_OFF HIGH
+bool relay_on;
 
+/* Both in and outside sensore use DHT22 type */
+#define DHT_IN_TYPE  DHT22 
+#define DHT_OUT_TYPE DHT22   
 
-
-#define RELAIS_PIN  14 // Anschluss des Lüfter-Relais (D5)
-#define DHT_IN_PIN   0 // Datenleitung für den DHT-Sensor innen (D3)
-#define DHT_OUT_PIN  2 // Datenleitung für den DHT-Sensor 2 (außen) (D4)
-
-#define RELAIS_EIN LOW
-#define RELAIS_AUS HIGH
-bool rel;
-
-#define DHTTYPE_1 DHT22 // DHT 22 
-#define DHTTYPE_2 DHT22 // DHT 22  
-
-// *******  Korrekturwerte der einzelnen Sensorwerte  *******
-#define TemperatureInAdjust  -0.7 // Korrekturwert Innensensor Temperatur
-//#define TemperatureInAdjust  +20.7 // Korrekturwert Innensensor Temperatur - test only to get Ventilator on
-#define TemperatureOutAdjust -0.4 // Korrekturwert Außensensor Temperatur
-#define HumidityInAdjust     +1.9 // Korrekturwert Innensensor Luftfeuchtigkeit
-#define HumidityOutAdjust    +1.3 // Korrekturwert Außensensor Luftfeuchtigkeit
-//***********************************************************
+/*******  Korrekturwerte der einzelnen Sensorwerte measured vs. Testo hygrometer at 6.2.2025 *******/
+#define TemperatureInAdjust  +0.1 // Korrekturwert Innensensor Temperatur
+#define TemperatureOutAdjust +0.1 // Korrekturwert Außensensor Temperatur
+#define HumidityInAdjust     +2.7 // Korrekturwert Innensensor Luftfeuchtigkeit 
+#define HumidityOutAdjust    +1.9 // Korrekturwert Außensensor Luftfeuchtigkeit 
 
 #define DewpointMinDelta    5.0 // minimaler Taupunktunterschied, bei dem das Relais schaltet
 #define DewpointHysteresis  1.0 // Abstand von Ein- und Ausschaltpunkt
 #define TemperatureInMin   10.0 // Minimale Innentemperatur, bei der die Lüftung aktiviert wird
 #define TemperatureOutMin -10.0 // Minimale Außentemperatur, bei der die Lüftung aktiviert wird
 
-DHT dht1(DHT_IN_PIN,  DHTTYPE_1); //Der Innensensor wird ab jetzt mit DHT_IN angesprochen
-DHT dht2(DHT_OUT_PIN, DHTTYPE_2); //Der Außensensor wird ab jetzt mit DHT_OUT angesprochen
+DHT dht1(DHT_IN_PIN,  DHT_IN_TYPE);  //Der Innensensor wird ab jetzt mit DHT_IN angesprochen
+DHT dht2(DHT_OUT_PIN, DHT_OUT_TYPE); //Der Außensensor wird ab jetzt mit DHT_OUT angesprochen
 
 LiquidCrystal_I2C lcd(0x27,20,4); // LCD: I2C-Addresse und Displaygröße setzen
 
-bool fehler = true;
+bool sensor_fault = true;
 
 void setup() {
 
@@ -79,22 +76,37 @@ void setup() {
   Serial.println("Taupunktluefter-Moritz"); // Serielle Ausgabe, falls noch kein LCD angeschlossen ist
   Serial.println(F("Teste Sensoren.."));
 
-  pinMode(RELAIS_PIN, OUTPUT);          // Relaispin als Output definieren
-  digitalWrite(RELAIS_PIN, RELAIS_AUS); // Relais ausschalten
+  pinMode(RELAY_PIN, OUTPUT);          // Relaispin als Output definieren
+  digitalWrite(RELAY_PIN, RELAY_OFF); // Relais ausschalten
+
+
+  // 1. Initialise LCD and display startup message /////////////////////////////////////////////////
   lcd.init();
-  lcd.backlight();                      
-  lcd.setCursor(2,0);
-  lcd.print(F("Teste Sensoren.."));
   
   byte Grad[8] = {B00111,B00101,B00111,B0000,B00000,B00000,B00000,B00000};      // Sonderzeichen ° definieren
   lcd.createChar(0, Grad);
   byte Strich[8] = {B00100,B00100,B00100,B00100,B00100,B00100,B00100,B00100};   // Sonderzeichen senkrechter Strich definieren
   lcd.createChar(1, Strich);
-    
-  dht1.begin(); // Sensoren starten
+  
+  lcd.backlight();     
+  
+  lcd.setCursor(1,0);
+  lcd.print(F("Taupunktluefter"));
+  lcd.setCursor(0,1);
+  lcd.print(F("(c) Marie&Papa, 2025"));
+  delay(2000);  // Zeit um das Display zu lesen  
+
+  // 2. Start up the sensors and test they are ok /////////////////////////////////////////////////
+  dht1.begin();
   dht2.begin();   
   
-  // Start of WiFi module ////////////////////////////////////////////////////////
+  lcd.clear();  
+  lcd.setCursor(2,0);
+  lcd.print(F("Connect to WiFi:"));
+  lcd.setCursor(2,1);
+  lcd.print(stassid);  
+ 
+  // 3. Start of WiFi module and connect to SSID from credentils.h /////////////////////////////////
   WiFi.begin(stassid, stapsk);
   
   while (WiFi.status() != WL_CONNECTED) 
@@ -103,6 +115,16 @@ void setup() {
     Serial.print ( "." );
   }
   Serial.println("\nWiFi connected");
+
+  lcd.setCursor(2,2);
+  lcd.print(F("OK"));
+  delay(2000);  // Zeit um das Display zu lesen  
+
+  lcd.clear();
+  lcd.setCursor(2,0);
+  lcd.print(F("Teste Sensoren:"));
+  
+  // 4. Start NTP client so we can display the time of day /////////////////////////////////////////
   
   timeClient.begin();
   timeClient.update();
@@ -110,63 +132,74 @@ void setup() {
   Serial.println("Taupunktluefter booted at " + timeClient.getFormattedTime());
 
 #ifdef THINGSPEAK
+  // 5. Start Thingspeak client so we can push our results and the vent setting ////////////////////
   ThingSpeak.begin(client);
 #endif  
 }
 
 void loop() 
 {
+  long  rssi;
   float HumidityIn     = dht1.readHumidity()    + HumidityInAdjust;     // Innenluftfeuchtigkeit auslesen und unter „h1“ speichern
   float TemperatureIn  = dht1.readTemperature() + TemperatureInAdjust;  // Innentemperatur auslesen und unter „t1“ speichern
   float HumidityOut    = dht2.readHumidity()    + HumidityOutAdjust;    // Außenluftfeuchtigkeit auslesen und unter „h2“ speichern
   float TemperatureOut = dht2.readTemperature() + TemperatureOutAdjust; // Außentemperatur auslesen und unter „t2“ speichern
   
-  if (fehler == true)  // Prüfen, ob gültige Werte von den Sensoren kommen
+  // 1. Check we get valid values from the sensors. ////////////////////////////////////////////////
+  // Note we always enter this if and display after first startup, as sensor_fault defaults to 1 
+  if (sensor_fault == true) 
   {
-    fehler = false; 
+    sensor_fault = false; 
     if (isnan(HumidityIn) || isnan(TemperatureIn) || HumidityIn > 100 || HumidityIn < 1 || TemperatureIn < -40 || TemperatureIn > 80 )  {
       Serial.println(F("Fehler beim Auslesen vom Innensensor!"));
-      lcd.setCursor(0,1);
-      lcd.print(F("Fehler Innensensor"));
-      fehler = true;
+      lcd.setCursor(2,1);
+      lcd.print(F("Innensensor  TOT"));
+      sensor_fault = true;
     }else {
-     lcd.setCursor(0,1);
-     lcd.print(F("Innensensor OK"));
-   }
+     lcd.setCursor(2,1);
+     lcd.print(F("Innensensor  OK"));
+    } 
+    delay(2000);  // Time to read the display
   
-    delay(2000);  // Zeit um das Display zu lesen
-  
-      if (isnan(HumidityOut) || isnan(TemperatureOut) || HumidityOut > 100 || HumidityOut < 1 || TemperatureOut < -40 || TemperatureOut  > 80)  {
-        Serial.println(F("Fehler beim Auslesen vom Aussensensor!"));
-        lcd.setCursor(0,2);
-        lcd.print(F("Fehler Aussensensor"));
-        fehler = true;
-      } else {
-        lcd.setCursor(0,2);
-        lcd.print(F("Aussensensor OK"));
-     }
-
-    delay(2000);  // Zeit um das Display zu lesen
+    if (isnan(HumidityOut) || isnan(TemperatureOut) || HumidityOut > 100 || HumidityOut < 1 || TemperatureOut < -40 || TemperatureOut  > 80)  {
+      Serial.println(F("Fehler beim Auslesen vom Aussensensor!"));
+      lcd.setCursor(2,2);
+      lcd.print(F("Aussensensor TOT"));
+      sensor_fault = true;
+    } else {
+      lcd.setCursor(2,2);
+      lcd.print(F("Aussensensor OK"));
+    }
+    delay(2000);  // Time to read the display
   }
   
-  if (isnan(HumidityIn) || isnan(TemperatureIn) || isnan(HumidityOut) || isnan(TemperatureOut)) fehler = true;
+  // 2. Make sure all values are numbers and not something else (like a string or so) //////////////
+  if (isnan(HumidityIn) || isnan(TemperatureIn) || isnan(HumidityOut) || isnan(TemperatureOut)) sensor_fault = true;
    
-  if (fehler == true) {
-    digitalWrite(RELAIS_PIN, RELAIS_AUS); // Relais ausschalten 
-    lcd.setCursor(0,3);
-    lcd.print(F("CPU Neustart....."));
-    while (1);  // Endlosschleife um das Display zu lesen und die CPU durch den Watchdog neu zu starten
+  // 3. If something is wrong with the sensor status or the result, restart ////////////////////////
+  if (sensor_fault == true) {
+    digitalWrite(RELAY_PIN, RELAY_OFF); // Relay off for safety reasons 
+    lcd.setCursor(2,3);
+    lcd.print(F("Restart.."));
+    while (1);  // Endless loop to wait for Watchdog restart
   }
 
-  //**** Taupunkte errechnen********
-  float DewpointIn  = taupunkt(TemperatureIn,  HumidityIn);
-  float DewpointOut = taupunkt(TemperatureOut, HumidityOut);
+  // 4. Calculate dewpoints //////////////////////////////////////////////////////////////////////// 
+  float DewpointIn  = CalculateDewpoint(TemperatureIn,  HumidityIn);
+  float DewpointOut = CalculateDewpoint(TemperatureOut, HumidityOut);
 
-  // Werteausgabe auf Serial Monitor
+  // 5. Update the NTP time for display and get the WiFi RSSI (field strenght) /////////////////////
   timeClient.update();
+  rssi = WiFi.RSSI();  // Get current WiFi signal strength
+	
+  // 6. Print debug information to the serial monitor //////////////////////////////////////////////
   Serial.println("Werte update at " + timeClient.getFormattedTime());  
   
-  Serial.print(F("Sensor-1: " ));
+  Serial.print("RSSI: ");
+  Serial.print(rssi);
+  Serial.println(" dBm"); 
+
+  Serial.print(F("Sensor In : " ));
   Serial.print(F("Luftfeuchtigkeit: "));
   Serial.print(HumidityIn);                     
   Serial.print(F("%  Temperatur: "));
@@ -176,7 +209,7 @@ void loop()
   Serial.print(DewpointIn);
   Serial.println(F("°C  "));
 
-  Serial.print("Sensor-2: " );
+  Serial.print("Sensor Out: " );
   Serial.print(F("Luftfeuchtigkeit: "));
   Serial.print(HumidityOut);
   Serial.print(F("%  Temperatur: "));
@@ -188,36 +221,34 @@ void loop()
 
   Serial.println();
 
-  // Werteausgabe auf dem I2C-Display
+  // 7. Update the real HW I2C display with measurement results ////////////////////////////////////
   lcd.clear();
   lcd.setCursor(0,0);
-  lcd.print(F("S1: "));
+  lcd.print(F("In : "));
   lcd.print(TemperatureIn); 
   lcd.write((uint8_t)0); // Sonderzeichen °C
   lcd.write(('C'));
-  // lcd.write((uint8_t)1); // Sonderzeichen |
   lcd.print(" ");
   lcd.print(HumidityIn);
   lcd.print(F("%"));
 
   lcd.setCursor(0,1);
-  lcd.print(F("S2: "));
+  lcd.print(F("Out: "));
   lcd.print(TemperatureOut); 
   lcd.write((uint8_t)0); // Sonderzeichen °C
   lcd.write(('C'));
-  //lcd.write((uint8_t)1); // Sonderzeichen |
   lcd.print(" ");  
   lcd.print(HumidityOut);
   lcd.print(F("%"));
 
   lcd.setCursor(0,2);
-  lcd.print(F("Taupunkt 1: "));
+  lcd.print(F("TP In : "));
   lcd.print(DewpointIn); 
   lcd.write((uint8_t)0); // Sonderzeichen °C
   lcd.write(('C'));
 
   lcd.setCursor(0,3);
-  lcd.print(F("Taupunkt 2: "));
+  lcd.print(F("TP Out: "));
   lcd.print(DewpointOut); 
   lcd.write((uint8_t)0); // Sonderzeichen °C
   lcd.write(('C'));
@@ -227,31 +258,29 @@ void loop()
   lcd.clear();
   lcd.setCursor(0,0);
   
+  
+  // 8. Calculate the dewpoint difference in vs. out, and decide about the relay setting ///////////
   float DeltaDewpoint = DewpointIn - DewpointOut;
 
   if (DeltaDewpoint > (DewpointMinDelta + DewpointHysteresis))
-	  rel = true;
+	  relay_on = true;
   if (DeltaDewpoint < (DewpointMinDelta))
-	  rel = false;
+	  relay_on = false;
   if (TemperatureIn < TemperatureInMin )
-	  rel = false;
+	  relay_on = false;
   if (TemperatureOut < TemperatureOutMin )
-	  rel = false;
+	  relay_on = false;
 
-#if 1
-  // Test, only temperature decides on relais switch
-    if (TemperatureIn > 22 )
-		rel=true;
-#endif
-  if (rel == true)
+  // 9. Control the relay, and display more information to the hardware I2C display ////////////////
+  if (relay_on == true)
   {
-    digitalWrite(RELAIS_PIN, RELAIS_EIN); // Relais einschalten
+    digitalWrite(RELAY_PIN, RELAY_ON); // Relais einschalten
     lcd.print(F("Lueftung: AN"));
 	Serial.println("Lueftung: AN");	
   } 
   else 
   {                             
-    digitalWrite(RELAIS_PIN, RELAIS_AUS); // Relais ausschalten
+    digitalWrite(RELAY_PIN, RELAY_OFF); // Relais ausschalten
     lcd.print(F("Lueftung: AUS"));
 	Serial.println("Lueftung: AUS");	
   }
@@ -262,10 +291,16 @@ void loop()
   lcd.write((uint8_t)0); // Sonderzeichen °C
   lcd.write('C');
 
+  lcd.setCursor(0,2);
+  lcd.print("WiFiRSSI: ");
+  lcd.print(rssi);
+  lcd.print(" dBm");  
+
   lcd.setCursor(0,3);
-  lcd.print("Time " + timeClient.getFormattedTime() + " (MEZ)");  
+  lcd.print("Time/MEZ: " + timeClient.getFormattedTime());  
 
 #ifdef THINGSPEAK
+  // 10. Push the results to the Thingspeak server onto the channel given in credentials.h /////////
   ThingSpeak.setStatus("Taupunktluefter");
   ThingSpeak.setField(1, TemperatureOut);
   ThingSpeak.setField(2, HumidityOut);  
@@ -273,7 +308,8 @@ void loop()
   ThingSpeak.setField(4, TemperatureIn);
   ThingSpeak.setField(5, HumidityIn);  
   ThingSpeak.setField(6, DewpointIn);
-  ThingSpeak.setField(7, rel);   
+  ThingSpeak.setField(7, relay_on);
+  ThingSpeak.setField(8, rssi);     
   
   int httpCode = ThingSpeak.writeFields(myChannelNumber, myWriteAPIKey);
 
@@ -289,7 +325,10 @@ void loop()
  delay(10000);   // Wartezeit zwischen zwei Messungen
 }
 
-float taupunkt(float t, float r) {
+
+
+// Subroutine to calculate the dewpoint ////////////////////////////////////////////////////////////
+float CalculateDewpoint(float t, float r) {
   
 float a, b;
   
@@ -314,9 +353,3 @@ float a, b;
   float tt = (b*v) / (a-v);
   return { tt };  
 }
-
-
- void software_Reset() // Startet das Programm neu, nicht aber die Sensoren oder das LCD 
-  {
-
-  }
