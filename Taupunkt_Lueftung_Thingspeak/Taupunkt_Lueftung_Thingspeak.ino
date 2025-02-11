@@ -3,6 +3,7 @@
 // 2024-12-31 	Otmar 	Based on Taupunkt_Lueftung.ino, but now for ESP8266 (WEMOS D1 mini)
 // 2025-02-05   Otmar   Correct input for In/Out DHT22. Add WiFi RSSI. Nicen startup display
 // 2025-02-06   Otmar   Commit final version for Moritz device
+// 2025-02-11   Otmar   Add ThingSpeak and WiFi error display
 
 // Dieser Code benötigt zwingend die folgenden Libraries:
 #include "DHT.h"
@@ -35,6 +36,8 @@ WiFiClient  client;
 //////////////////////////////////////////////////////////////////////////
 #include <NTPClient.h>  // NTP time to dim display during night 
 #include <WiFiUdp.h>
+
+#define WIFI_ERROR 9999 // Indicates WiFi is not connected in RSSI
 
 #include "TimeLib.h"
 WiFiUDP ntpUDP;
@@ -107,6 +110,8 @@ void setup() {
   lcd.print(stassid);  
  
   // 3. Start of WiFi module and connect to SSID from credentils.h /////////////////////////////////
+  WiFi.setHostname("Taupunktluefter");
+  
   WiFi.begin(stassid, stapsk);
   
   while (WiFi.status() != WL_CONNECTED) 
@@ -139,7 +144,7 @@ void setup() {
 
 void loop() 
 {
-  long  rssi;
+  long  wifi_rssi;
   float HumidityIn     = dht1.readHumidity()    + HumidityInAdjust;     // Innenluftfeuchtigkeit auslesen und unter „h1“ speichern
   float TemperatureIn  = dht1.readTemperature() + TemperatureInAdjust;  // Innentemperatur auslesen und unter „t1“ speichern
   float HumidityOut    = dht2.readHumidity()    + HumidityOutAdjust;    // Außenluftfeuchtigkeit auslesen und unter „h2“ speichern
@@ -190,14 +195,22 @@ void loop()
 
   // 5. Update the NTP time for display and get the WiFi RSSI (field strenght) /////////////////////
   timeClient.update();
-  rssi = WiFi.RSSI();  // Get current WiFi signal strength
-	
+  wifi_rssi = WiFi.RSSI();                       // Get current WiFi signal strength
+  if (WiFi.status() != WL_CONNECTED) {
+    wifi_rssi = WIFI_ERROR;
+  }
+  
   // 6. Print debug information to the serial monitor //////////////////////////////////////////////
   Serial.println("Werte update at " + timeClient.getFormattedTime());  
   
   Serial.print("RSSI: ");
-  Serial.print(rssi);
-  Serial.println(" dBm"); 
+  if (wifi_rssi != WIFI_ERROR) {	  
+    Serial.print(wifi_rssi);
+    Serial.println(" dBm"); 
+  }
+  else {
+	Serial.println("WiFi lost!");
+  }
 
   Serial.print(F("Sensor In : " ));
   Serial.print(F("Luftfeuchtigkeit: "));
@@ -253,7 +266,7 @@ void loop()
   lcd.write((uint8_t)0); // Sonderzeichen °C
   lcd.write(('C'));
 
-  delay(5000); // Zeit um das Display zu lesen
+  delay(3000); // Zeit um das Display zu lesen
 
   lcd.clear();
   lcd.setCursor(0,0);
@@ -293,9 +306,14 @@ void loop()
 
   lcd.setCursor(0,2);
   lcd.print("WiFiRSSI: ");
-  lcd.print(rssi);
-  lcd.print(" dBm");  
-
+  if (wifi_rssi != WIFI_ERROR) {	  
+    lcd.print(wifi_rssi);
+    lcd.print("dBm");  
+  }
+  else {
+	lcd.print("WiFi lost!");
+  }  
+  
   lcd.setCursor(0,3);
   lcd.print("Time/MEZ: " + timeClient.getFormattedTime());  
 
@@ -309,7 +327,7 @@ void loop()
   ThingSpeak.setField(5, HumidityIn);  
   ThingSpeak.setField(6, DewpointIn);
   ThingSpeak.setField(7, relay_on);
-  ThingSpeak.setField(8, rssi);     
+  ThingSpeak.setField(8, wifi_rssi);     
   
   int httpCode = ThingSpeak.writeFields(myChannelNumber, myWriteAPIKey);
 
@@ -320,9 +338,13 @@ void loop()
   else 
   {
 	Serial.println("Problem writing to ThingSpeak channel. HTTP error code " + String(httpCode));
+    if (wifi_rssi != WIFI_ERROR) {	
+	  lcd.setCursor(16,2);
+      lcd.print("/TS?");	// The '/TS?' string after the WiFi RSSI indicates a problem with pushing Thingspeak data
+	}
   }
 #endif
- delay(10000);   // Wartezeit zwischen zwei Messungen
+ delay(12000);   // Wartezeit zwischen zwei Messungen
 }
 
 
